@@ -9,8 +9,17 @@ from src.config import RANDOM_STATE
 from src.preprocessing import build_preprocessor
 
 
-def build_logistic_regression_pipeline(feature_cols: list) -> Pipeline:
-    return Pipeline([
-        ("preprocessor", build_preprocessor(feature_cols)),
-        ("model", LogisticRegression(max_iter=1000, random_state=RANDOM_STATE)),
-    ])
+def build_logistic_regression_pipeline(
+    feature_cols: list, class_weight=None
+) -> Pipeline:
+    return Pipeline(
+        [
+            ("preprocessor", build_preprocessor(feature_cols)),
+            (
+                "model",
+                LogisticRegression(
+                    max_iter=1000, random_state=RANDOM_STATE, class_weight=class_weight
+                ),
+            ),
+        ]
+    )

@@ -71,15 +71,17 @@ def prepare_early_warning_features(df, enrollment_cols, sem1_cols):
     return X, y, early_warning_features
 
 
-def train_baseline_model(X, y, feature_cols):
-    """Train/test split + Logistic Regression baseline, accuracy as a sanity check."""
+def train_logistic_regression(
+    X, y, feature_cols, class_weight=None, label="Logistic Regression"
+):
+    """Train/test split + Logistic Regression, accuracy as a sanity check."""
     X_train, X_test, y_train, y_test = split_train_test(X, y)
 
-    model = build_logistic_regression_pipeline(feature_cols)
+    model = build_logistic_regression_pipeline(feature_cols, class_weight=class_weight)
     model.fit(X_train, y_train)
 
     accuracy = model.score(X_test, y_test)
-    print(f"\nBaseline Logistic Regression — test accuracy: {accuracy:.3f}")
+    print(f"\n{label} — test accuracy: {accuracy:.3f}")
 
     return model, X_test, y_test
 
@@ -99,8 +101,35 @@ def run_pipeline():
     X, y, early_warning_features = prepare_early_warning_features(
         df, enrollment_cols, sem1_cols
     )
-    model, X_test, y_test = train_baseline_model(X, y, early_warning_features)
-    evaluate_model(
-        model, X_test, y_test, classes, model_name="logistic_regression_baseline"
+
+    baseline_model, X_test, y_test = train_logistic_regression(
+        X,
+        y,
+        early_warning_features,
+        class_weight=None,
+        label="Logistic Regression (baseline)",
     )
-    return model, X_test, y_test, classes
+    evaluate_model(
+        baseline_model,
+        X_test,
+        y_test,
+        classes,
+        model_name="logistic_regression_baseline",
+    )
+
+    balanced_model, X_test, y_test = train_logistic_regression(
+        X,
+        y,
+        early_warning_features,
+        class_weight="balanced",
+        label="Logistic Regression (class_weight=balanced)",
+    )
+    evaluate_model(
+        balanced_model,
+        X_test,
+        y_test,
+        classes,
+        model_name="logistic_regression_balanced",
+    )
+
+    return baseline_model, balanced_model, X_test, y_test, classes
