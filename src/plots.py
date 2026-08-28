@@ -3,6 +3,7 @@ Plots, saved to OUTPUT_DIR as PNG files.
 """
 
 import matplotlib.pyplot as plt
+from sklearn.metrics import ConfusionMatrixDisplay
 
 
 def plot_target_distribution(df, classes, output_dir):
@@ -26,6 +27,17 @@ def plot_feature_distributions_by_target(df, classes, output_dir, columns):
         ax.set_title(col)
         ax.legend(fontsize=8)
     path = output_dir / "feature_distributions_by_target.png"
+    plt.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {path}")
+
+
+def plot_confusion_matrix(cm, classes, output_dir, filename="confusion_matrix.png"):
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=classes)
+
+    fig, ax = plt.subplots(figsize=(5, 5))
+    disp.plot(ax=ax, cmap="Blues", colorbar=False)
+    path = output_dir / filename
     plt.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved: {path}")

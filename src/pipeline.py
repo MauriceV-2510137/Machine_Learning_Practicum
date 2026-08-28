@@ -13,8 +13,13 @@ from src.data import (
     load_data,
     split_train_test,
 )
+from src.evaluate import compute_confusion_matrix, print_classification_report
 from src.models import build_logistic_regression_pipeline
-from src.plots import plot_feature_distributions_by_target, plot_target_distribution
+from src.plots import (
+    plot_confusion_matrix,
+    plot_feature_distributions_by_target,
+    plot_target_distribution,
+)
 
 pd.set_option("display.max_columns", None)
 pd.set_option("display.width", 140)
@@ -79,9 +84,23 @@ def train_baseline_model(X, y, feature_cols):
     return model, X_test, y_test
 
 
+def evaluate_model(model, X_test, y_test, classes, model_name):
+    """Classification report + confusion matrix for a trained model."""
+    print_classification_report(model, X_test, y_test, classes)
+    cm = compute_confusion_matrix(model, X_test, y_test, classes)
+    plot_confusion_matrix(
+        cm, classes, OUTPUT_DIR, filename=f"confusion_matrix_{model_name}.png"
+    )
+
+
 def run_pipeline():
     df, enrollment_cols, sem1_cols, _, classes = load_and_summarize()
     generate_plots(df, classes)
-    X, y, early_warning_features = prepare_early_warning_features(df, enrollment_cols, sem1_cols)
+    X, y, early_warning_features = prepare_early_warning_features(
+        df, enrollment_cols, sem1_cols
+    )
     model, X_test, y_test = train_baseline_model(X, y, early_warning_features)
+    evaluate_model(
+        model, X_test, y_test, classes, model_name="logistic_regression_baseline"
+    )
     return model, X_test, y_test, classes
