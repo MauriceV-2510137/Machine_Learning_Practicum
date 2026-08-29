@@ -21,11 +21,14 @@ def tune_hyperparameter(
     class_weight=None,
     cv=5,
     scoring="balanced_accuracy",
+    n_jobs=-1,
+    verbose=1,
 ):
     """
     Cross-validated validation curve for one model hyperparameter.
     Returns (best_value, train_scores, val_scores); scores have shape
-    (len(param_range), cv).
+    (len(param_range), cv). n_jobs=-1 parallelizes fold x candidate fits
+    across all CPU cores; verbose=1 prints progress via joblib.
     """
     pipeline = pipeline_builder(feature_cols, class_weight=class_weight)
     train_scores, val_scores = validation_curve(
@@ -36,6 +39,8 @@ def tune_hyperparameter(
         param_range=param_range,
         cv=cv,
         scoring=scoring,
+        n_jobs=n_jobs,
+        verbose=verbose,
     )
     best_idx = val_scores.mean(axis=1).argmax()
     best_value = param_range[best_idx]
