@@ -34,14 +34,21 @@ def build_decision_tree_pipeline(feature_cols: list, class_weight=None) -> Pipel
     )
 
 
-def build_random_forest_pipeline(feature_cols: list, class_weight=None) -> Pipeline:
+def build_random_forest_pipeline(
+    feature_cols: list,
+    class_weight=None,
+    n_jobs=-1,
+    max_features="sqrt",
+    n_estimators=300,
+) -> Pipeline:
     return _build_pipeline(
         feature_cols,
         RandomForestClassifier(
-            n_estimators=300,
+            n_estimators=n_estimators,
             random_state=RANDOM_STATE,
             class_weight=class_weight,
-            n_jobs=-1,
+            n_jobs=n_jobs,
+            max_features=max_features,
         ),
     )
 

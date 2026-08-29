@@ -1,5 +1,6 @@
 """Cross-validated hyperparameter tuning; runs on the training split only, never touches the test set."""
 
+import numpy as np
 from sklearn.model_selection import validation_curve
 from sklearn.tree import DecisionTreeClassifier
 
@@ -50,3 +51,11 @@ def get_ccp_alpha_candidates(
 
     stride = max(1, len(alphas) // max_candidates)
     return alphas[::stride]
+
+
+def get_max_features_candidates(X_train, feature_cols, num_candidates=6):
+    """Candidate max_features (m), log-spaced from 1 to half the features (m=all features is the Bagging case)."""
+    preprocessor = build_preprocessor(feature_cols)
+    n_features = preprocessor.fit_transform(X_train).shape[1]
+    upper = max(2, n_features // 2)
+    return np.unique(np.round(np.geomspace(1, upper, num=num_candidates)).astype(int))

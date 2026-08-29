@@ -1,5 +1,7 @@
 """Per-model experiments: train (and tune, where applicable), evaluate, return fitted model(s)."""
 
+from functools import partial
+
 from src.config import OUTPUT_DIR
 from src.data import split_train_test
 from src.evaluate import compute_confusion_matrix, print_classification_report
@@ -11,7 +13,15 @@ from src.models import (
     build_random_forest_pipeline,
 )
 from src.plots import plot_confusion_matrix, plot_validation_curve
-from src.tuning import get_ccp_alpha_candidates, tune_hyperparameter
+from src.tuning import (
+    get_ccp_alpha_candidates,
+    get_max_features_candidates,
+    tune_hyperparameter,
+)
+
+# Trees used only during max_features tuning -- fewer than the final 300, since the ranking of
+# candidate m values barely changes with tree count, and it keeps CV tuning fast.
+TUNING_N_ESTIMATORS = 50
 
 
 def train_model(
@@ -90,15 +100,107 @@ def run_logistic_regression(X, y, feature_cols, classes):
 
 
 def run_random_forest(X, y, feature_cols, classes):
-    return run_baseline_and_balanced(
-        build_random_forest_pipeline,
+    """Cross-validated tuning of max_features (m), then n_estimators, then baseline + balanced fits."""
+    X_train, X_test, y_train, y_test = split_train_test(X, y)
+
+    m_values = get_max_features_candidates(X_train, feature_cols)
+    tuning_builder = partial(
+        build_random_forest_pipeline, n_jobs=1, n_estimators=TUNING_N_ESTIMATORS
+    )
+    print(
+        f"\nRandom Forest — tuning max_features (m) via 5-fold CV ({len(m_values)} candidates)..."
+    )
+    best_m, m_train_scores, m_val_scores = tune_hyperparameter(
+        tuning_builder,
+        feature_cols,
+        X_train,
+        y_train,
+        param_name="max_features",
+        param_range=m_values,
+    )
+    print(
+        f"Random Forest — best max_features (CV balanced accuracy): {best_m} of {m_values[-1]}"
+    )
+    plot_validation_curve(
+        m_values,
+        m_train_scores,
+        m_val_scores,
+        param_label="max_features (m)",
+        output_dir=OUTPUT_DIR,
+        filename="validation_curve_random_forest_max_features.png",
+        log_x=True,
+    )
+
+    n_estimators_values = [50, 100, 200, 300]
+    tuning_builder_fixed_m = partial(
+        build_random_forest_pipeline, n_jobs=1, max_features=int(best_m)
+    )
+    print(
+        f"Random Forest — checking n_estimators plateau via 5-fold CV ({len(n_estimators_values)} candidates, m={best_m})..."
+    )
+    _, n_train_scores, n_val_scores = tune_hyperparameter(
+        tuning_builder_fixed_m,
+        feature_cols,
+        X_train,
+        y_train,
+        param_name="n_estimators",
+        param_range=n_estimators_values,
+    )
+    plot_validation_curve(
+        n_estimators_values,
+        n_train_scores,
+        n_val_scores,
+        param_label="n_estimators",
+        output_dir=OUTPUT_DIR,
+        filename="validation_curve_random_forest_n_estimators.png",
+    )
+    # Unlike max_features/ccp_alpha, more trees can't overfit (averaging only reduces variance).
+    final_n_estimators = 300
+    print(
+        f"Random Forest — n_estimators kept at {final_n_estimators} (curve confirms plateau, more trees can't overfit)"
+    )
+
+    tuned_params = {
+        "model__max_features": int(best_m),
+        "model__n_estimators": final_n_estimators,
+    }
+    label_suffix = f"m={best_m}, n_estimators={final_n_estimators}"
+
+    baseline_model, X_test, y_test = train_model(
         X,
         y,
+        build_random_forest_pipeline,
         feature_cols,
-        classes,
-        "random_forest",
-        "Random Forest",
+        class_weight=None,
+        extra_params=tuned_params,
+        label=f"Random Forest (tuned, {label_suffix}, baseline)",
     )
+    evaluate_model(
+        baseline_model,
+        X_test,
+        y_test,
+        classes,
+        model_name="random_forest_tuned_baseline",
+    )
+
+    balanced_model, X_test, y_test = train_model(
+        X,
+        y,
+        build_random_forest_pipeline,
+        feature_cols,
+        class_weight="balanced",
+        extra_params=tuned_params,
+        label=f"Random Forest (tuned, {label_suffix}, balanced)",
+    )
+    evaluate_model(
+        balanced_model,
+        X_test,
+        y_test,
+        classes,
+        model_name="random_forest_tuned_balanced",
+    )
+
+    return {"baseline": baseline_model, "balanced": balanced_model}
 
 
 def run_decision_tree(X, y, feature_cols, classes):

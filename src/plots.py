@@ -1,5 +1,8 @@
 """Plots, saved to OUTPUT_DIR as PNG files."""
 
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from sklearn.metrics import ConfusionMatrixDisplay
 
