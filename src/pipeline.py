@@ -10,6 +10,7 @@ from src.data import (
     load_data,
 )
 from src.experiments import (
+    run_bagging,
     run_decision_tree,
     run_gradient_boosting,
     run_logistic_regression,
@@ -25,6 +26,7 @@ pd.set_option("display.width", 140)
 MODEL_STEPS = {
     "logistic_regression": run_logistic_regression,
     "decision_tree": run_decision_tree,
+    "bagging": run_bagging,
     "random_forest": run_random_forest,
     "gradient_boosting": run_gradient_boosting,
 }

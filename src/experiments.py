@@ -4,6 +4,7 @@ from src.config import OUTPUT_DIR
 from src.data import split_train_test
 from src.evaluate import compute_confusion_matrix, print_classification_report
 from src.models import (
+    build_bagging_pipeline,
     build_decision_tree_pipeline,
     build_gradient_boosting_pipeline,
     build_logistic_regression_pipeline,
@@ -138,6 +139,18 @@ def run_decision_tree(X, y, feature_cols, classes):
     evaluate_model(model, X_test, y_test, classes, model_name="decision_tree_pruned")
 
     return {"pruned": model}
+
+
+def run_bagging(X, y, feature_cols, classes):
+    return run_baseline_and_balanced(
+        build_bagging_pipeline,
+        X,
+        y,
+        feature_cols,
+        classes,
+        "bagging",
+        "Bagging",
+    )
 
 
 def run_gradient_boosting(X, y, feature_cols, classes):

@@ -38,7 +38,24 @@ def build_random_forest_pipeline(feature_cols: list, class_weight=None) -> Pipel
     return _build_pipeline(
         feature_cols,
         RandomForestClassifier(
-            n_estimators=300, random_state=RANDOM_STATE, class_weight=class_weight
+            n_estimators=300,
+            random_state=RANDOM_STATE,
+            class_weight=class_weight,
+            n_jobs=-1,
+        ),
+    )
+
+
+def build_bagging_pipeline(feature_cols: list, class_weight=None) -> Pipeline:
+    """Bagging is Random Forest with max_features=None (m=p, every split considers all features)."""
+    return _build_pipeline(
+        feature_cols,
+        RandomForestClassifier(
+            n_estimators=300,
+            random_state=RANDOM_STATE,
+            class_weight=class_weight,
+            max_features=None,
+            n_jobs=-1,
         ),
     )
 
