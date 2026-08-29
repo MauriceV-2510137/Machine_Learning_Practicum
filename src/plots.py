@@ -1,6 +1,4 @@
-"""
-Plots, saved to OUTPUT_DIR as PNG files.
-"""
+"""Plots, saved to OUTPUT_DIR as PNG files."""
 
 import matplotlib.pyplot as plt
 from sklearn.metrics import ConfusionMatrixDisplay

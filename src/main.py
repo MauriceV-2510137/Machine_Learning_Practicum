@@ -1,6 +1,4 @@
-"""
-Entry point.
-"""
+"""Entry point; `--steps` selects which model steps to run (default: all, see --help)."""
 
 import argparse
 

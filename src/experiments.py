@@ -1,10 +1,4 @@
-"""
-Per-model experiments. Each function trains (and tunes, where applicable)
-one model family, evaluates it, and returns its fitted model(s) as a dict.
-
-Kept separate from pipeline.py so individual models can be worked on and
-selectively re-run without touching the orchestration logic.
-"""
+"""Per-model experiments: train (and tune, where applicable), evaluate, return fitted model(s)."""
 
 from src.config import OUTPUT_DIR
 from src.data import split_train_test
@@ -28,9 +22,7 @@ def train_model(
     extra_params=None,
     label="Model",
 ):
-    """Train/test split + fit a pipeline built by pipeline_builder, accuracy as a sanity check.
-    extra_params (e.g. {"model__ccp_alpha": 0.001}) are applied via set_params
-    before fitting -- used to plug in a cross-validated hyperparameter choice."""
+    """Train/test split + fit; extra_params (e.g. {"model__ccp_alpha": 0.001}) applied via set_params before fit."""
     X_train, X_test, y_train, y_test = split_train_test(X, y)
 
     model = pipeline_builder(feature_cols, class_weight=class_weight)
@@ -53,47 +45,63 @@ def evaluate_model(model, X_test, y_test, classes, model_name):
     )
 
 
-def run_logistic_regression(X, y, feature_cols, classes):
-    """Baseline + class-balanced Logistic Regression."""
+def run_baseline_and_balanced(
+    pipeline_builder, X, y, feature_cols, classes, model_name, label
+):
+    """Train + evaluate a baseline and a class_weight="balanced" variant of the same model."""
     baseline_model, X_test, y_test = train_model(
         X,
         y,
-        build_logistic_regression_pipeline,
+        pipeline_builder,
         feature_cols,
         class_weight=None,
-        label="Logistic Regression (baseline)",
+        label=f"{label} (baseline)",
     )
     evaluate_model(
-        baseline_model,
-        X_test,
-        y_test,
-        classes,
-        model_name="logistic_regression_baseline",
+        baseline_model, X_test, y_test, classes, model_name=f"{model_name}_baseline"
     )
 
     balanced_model, X_test, y_test = train_model(
         X,
         y,
-        build_logistic_regression_pipeline,
+        pipeline_builder,
         feature_cols,
         class_weight="balanced",
-        label="Logistic Regression (class_weight=balanced)",
+        label=f"{label} (class_weight=balanced)",
     )
     evaluate_model(
-        balanced_model,
-        X_test,
-        y_test,
-        classes,
-        model_name="logistic_regression_balanced",
+        balanced_model, X_test, y_test, classes, model_name=f"{model_name}_balanced"
     )
 
     return {"baseline": baseline_model, "balanced": balanced_model}
 
 
+def run_logistic_regression(X, y, feature_cols, classes):
+    return run_baseline_and_balanced(
+        build_logistic_regression_pipeline,
+        X,
+        y,
+        feature_cols,
+        classes,
+        "logistic_regression",
+        "Logistic Regression",
+    )
+
+
+def run_random_forest(X, y, feature_cols, classes):
+    return run_baseline_and_balanced(
+        build_random_forest_pipeline,
+        X,
+        y,
+        feature_cols,
+        classes,
+        "random_forest",
+        "Random Forest",
+    )
+
+
 def run_decision_tree(X, y, feature_cols, classes):
-    """Cost-complexity pruning: derive candidate ccp_alpha values from the
-    training data's own pruning path, pick the best via cross-validation,
-    then fit and evaluate the final tree."""
+    """Cross-validated cost-complexity pruning, then fit and evaluate the final tree."""
     X_train, X_test, y_train, y_test = split_train_test(X, y)
 
     alphas = get_ccp_alpha_candidates(X_train, y_train, feature_cols)
@@ -132,37 +140,8 @@ def run_decision_tree(X, y, feature_cols, classes):
     return {"pruned": model}
 
 
-def run_random_forest(X, y, feature_cols, classes):
-    """Baseline + class-balanced Random Forest."""
-    baseline_model, X_test, y_test = train_model(
-        X,
-        y,
-        build_random_forest_pipeline,
-        feature_cols,
-        class_weight=None,
-        label="Random Forest (baseline)",
-    )
-    evaluate_model(
-        baseline_model, X_test, y_test, classes, model_name="random_forest_baseline"
-    )
-
-    balanced_model, X_test, y_test = train_model(
-        X,
-        y,
-        build_random_forest_pipeline,
-        feature_cols,
-        class_weight="balanced",
-        label="Random Forest (class_weight=balanced)",
-    )
-    evaluate_model(
-        balanced_model, X_test, y_test, classes, model_name="random_forest_balanced"
-    )
-
-    return {"baseline": baseline_model, "balanced": balanced_model}
-
-
 def run_gradient_boosting(X, y, feature_cols, classes):
-    """Baseline Gradient Boosting (no class_weight support -- see models.py)."""
+    """Baseline only -- GradientBoostingClassifier has no class_weight support (see models.py)."""
     baseline_model, X_test, y_test = train_model(
         X,
         y,

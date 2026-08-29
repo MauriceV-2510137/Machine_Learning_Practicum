@@ -1,6 +1,4 @@
-"""
-Evaluation: compute metrics for a trained model.
-"""
+"""Evaluation: compute metrics for a trained model."""
 
 from sklearn.metrics import classification_report, confusion_matrix
 

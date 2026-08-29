@@ -1,6 +1,4 @@
-"""
-Timing helper.
-"""
+"""Timing helper."""
 
 import time
 from contextlib import contextmanager
@@ -8,9 +6,7 @@ from contextlib import contextmanager
 
 @contextmanager
 def timer(label: str = "Run"):
-    """
-    Context manager that prints how long the wrapped block took.
-    """
+    """Context manager that prints how long the wrapped block took."""
     start = time.perf_counter()
     try:
         yield

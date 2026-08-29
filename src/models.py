@@ -1,6 +1,4 @@
-"""
-Pipeline builders: combine the shared preprocessor with a model.
-"""
+"""Pipeline builders: combine the shared preprocessor with a model."""
 
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -11,65 +9,46 @@ from src.config import RANDOM_STATE
 from src.preprocessing import build_preprocessor
 
 
+def _build_pipeline(feature_cols: list, estimator) -> Pipeline:
+    """Wrap the shared preprocessor and a given estimator into one Pipeline."""
+    return Pipeline(
+        [("preprocessor", build_preprocessor(feature_cols)), ("model", estimator)]
+    )
+
+
 def build_logistic_regression_pipeline(
     feature_cols: list, class_weight=None
 ) -> Pipeline:
-    return Pipeline(
-        [
-            ("preprocessor", build_preprocessor(feature_cols)),
-            (
-                "model",
-                LogisticRegression(
-                    max_iter=1000, random_state=RANDOM_STATE, class_weight=class_weight
-                ),
-            ),
-        ]
+    return _build_pipeline(
+        feature_cols,
+        LogisticRegression(
+            max_iter=1000, random_state=RANDOM_STATE, class_weight=class_weight
+        ),
     )
 
 
 def build_decision_tree_pipeline(feature_cols: list, class_weight=None) -> Pipeline:
-    return Pipeline(
-        [
-            ("preprocessor", build_preprocessor(feature_cols)),
-            (
-                "model",
-                DecisionTreeClassifier(
-                    random_state=RANDOM_STATE, class_weight=class_weight
-                ),
-            ),
-        ]
+    return _build_pipeline(
+        feature_cols,
+        DecisionTreeClassifier(random_state=RANDOM_STATE, class_weight=class_weight),
     )
 
 
 def build_random_forest_pipeline(feature_cols: list, class_weight=None) -> Pipeline:
-    return Pipeline(
-        [
-            ("preprocessor", build_preprocessor(feature_cols)),
-            (
-                "model",
-                RandomForestClassifier(
-                    n_estimators=300,
-                    random_state=RANDOM_STATE,
-                    class_weight=class_weight,
-                ),
-            ),
-        ]
+    return _build_pipeline(
+        feature_cols,
+        RandomForestClassifier(
+            n_estimators=300, random_state=RANDOM_STATE, class_weight=class_weight
+        ),
     )
 
 
 def build_gradient_boosting_pipeline(feature_cols: list, class_weight=None) -> Pipeline:
-    # GradientBoostingClassifier has no class_weight parameter (unlike LogisticRegression/RandomForestClassifier)
+    """GradientBoostingClassifier has no class_weight param -- balancing would need sample_weight at fit time instead."""
     if class_weight is not None:
         raise NotImplementedError(
-            "GradientBoostingClassifier has no class_weight parameter; "
-            "use sample_weight at fit time instead."
+            "GradientBoostingClassifier has no class_weight parameter."
         )
-    return Pipeline(
-        [
-            ("preprocessor", build_preprocessor(feature_cols)),
-            (
-                "model",
-                GradientBoostingClassifier(random_state=RANDOM_STATE),
-            ),
-        ]
+    return _build_pipeline(
+        feature_cols, GradientBoostingClassifier(random_state=RANDOM_STATE)
     )

@@ -1,9 +1,4 @@
-"""
-Pipeline orchestration: load data, generate EDA plots, and run the selected
-model steps. Each model family's actual training/tuning/evaluation logic
-lives in experiments.py -- this file just wires them together and times
-each one.
-"""
+"""Pipeline orchestration: load data, generate EDA plots, run the selected model steps."""
 
 import pandas as pd
 
@@ -26,9 +21,7 @@ from src.timer import timer
 pd.set_option("display.max_columns", None)
 pd.set_option("display.width", 140)
 
-# Registry of runnable model steps. Add a new model here once its
-# experiments.py function exists, and it becomes selectable via
-# `python -m src.main --steps <name>`.
+# Registry of runnable model steps, selectable via `python -m src.main --steps <name>`.
 MODEL_STEPS = {
     "logistic_regression": run_logistic_regression,
     "decision_tree": run_decision_tree,
@@ -84,12 +77,7 @@ def prepare_early_warning_features(df, enrollment_cols, sem1_cols):
 
 
 def run_pipeline(selected_steps=None):
-    """
-    Run the full pipeline: load data, EDA plots, early-warning features,
-    then the selected model steps (default: all of MODEL_STEPS). Each step
-    is timed individually; wrap the call in main.py's timer for the total.
-    Returns {step_name: step_result}.
-    """
+    """Load data + EDA, then run the selected model steps (default: all), timed individually."""
     steps_to_run = selected_steps or list(MODEL_STEPS.keys())
     unknown = set(steps_to_run) - set(MODEL_STEPS.keys())
     if unknown:

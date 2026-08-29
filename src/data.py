@@ -1,6 +1,4 @@
-"""
-Data loading, cleaning, and structure derived from the actual loaded data (feature groups, class labels) rather than hardcoded.
-"""
+"""Data loading, cleaning, and structure derived from the actual data rather than hardcoded."""
 
 import pandas as pd
 from sklearn.model_selection import train_test_split
@@ -23,9 +21,7 @@ def load_data(path=DATA_PATH) -> pd.DataFrame:
 
 
 def infer_feature_groups(df: pd.DataFrame, target_col: str = TARGET_COL):
-    """
-    Split columns into (enrollment, sem1, sem2)
-    """
+    """Split columns into (enrollment, sem1, sem2)."""
     cols = [c for c in df.columns if c != target_col]
     sem1 = [c for c in cols if SEM1_MARKER in c]
     sem2 = [c for c in cols if SEM2_MARKER in c]
@@ -47,8 +43,10 @@ def get_feature_target_split(
     return X, y
 
 
-def split_train_test(X, y, test_size: float = TEST_SIZE, random_state: int = RANDOM_STATE):
-    """
-    Stratified train/test split
-    """
-    return train_test_split(X, y, test_size=test_size, random_state=random_state, stratify=y)
+def split_train_test(
+    X, y, test_size: float = TEST_SIZE, random_state: int = RANDOM_STATE
+):
+    """Stratified train/test split."""
+    return train_test_split(
+        X, y, test_size=test_size, random_state=random_state, stratify=y
+    )
