@@ -14,7 +14,11 @@ from src.data import (
     split_train_test,
 )
 from src.evaluate import compute_confusion_matrix, print_classification_report
-from src.models import build_logistic_regression_pipeline
+from src.models import (
+    build_gradient_boosting_pipeline,
+    build_logistic_regression_pipeline,
+    build_random_forest_pipeline,
+)
 from src.plots import (
     plot_confusion_matrix,
     plot_feature_distributions_by_target,
@@ -71,13 +75,11 @@ def prepare_early_warning_features(df, enrollment_cols, sem1_cols):
     return X, y, early_warning_features
 
 
-def train_logistic_regression(
-    X, y, feature_cols, class_weight=None, label="Logistic Regression"
-):
-    """Train/test split + Logistic Regression, accuracy as a sanity check."""
+def train_model(X, y, pipeline_builder, feature_cols, class_weight=None, label="Model"):
+    """Train/test split + fit a pipeline built by pipeline_builder, accuracy as a sanity check."""
     X_train, X_test, y_train, y_test = split_train_test(X, y)
 
-    model = build_logistic_regression_pipeline(feature_cols, class_weight=class_weight)
+    model = pipeline_builder(feature_cols, class_weight=class_weight)
     model.fit(X_train, y_train)
 
     accuracy = model.score(X_test, y_test)
@@ -102,9 +104,10 @@ def run_pipeline():
         df, enrollment_cols, sem1_cols
     )
 
-    baseline_model, X_test, y_test = train_logistic_regression(
+    baseline_model, X_test, y_test = train_model(
         X,
         y,
+        build_logistic_regression_pipeline,
         early_warning_features,
         class_weight=None,
         label="Logistic Regression (baseline)",
@@ -117,9 +120,10 @@ def run_pipeline():
         model_name="logistic_regression_baseline",
     )
 
-    balanced_model, X_test, y_test = train_logistic_regression(
+    balanced_model, X_test, y_test = train_model(
         X,
         y,
+        build_logistic_regression_pipeline,
         early_warning_features,
         class_weight="balanced",
         label="Logistic Regression (class_weight=balanced)",
@@ -132,4 +136,61 @@ def run_pipeline():
         model_name="logistic_regression_balanced",
     )
 
-    return baseline_model, balanced_model, X_test, y_test, classes
+    rf_baseline_model, X_test, y_test = train_model(
+        X,
+        y,
+        build_random_forest_pipeline,
+        early_warning_features,
+        class_weight=None,
+        label="Random Forest (baseline)",
+    )
+    evaluate_model(
+        rf_baseline_model,
+        X_test,
+        y_test,
+        classes,
+        model_name="random_forest_baseline",
+    )
+
+    rf_balanced_model, X_test, y_test = train_model(
+        X,
+        y,
+        build_random_forest_pipeline,
+        early_warning_features,
+        class_weight="balanced",
+        label="Random Forest (class_weight=balanced)",
+    )
+    evaluate_model(
+        rf_balanced_model,
+        X_test,
+        y_test,
+        classes,
+        model_name="random_forest_balanced",
+    )
+
+    gb_baseline_model, X_test, y_test = train_model(
+        X,
+        y,
+        build_gradient_boosting_pipeline,
+        early_warning_features,
+        class_weight=None,
+        label="Gradient Boosting (baseline)",
+    )
+    evaluate_model(
+        gb_baseline_model,
+        X_test,
+        y_test,
+        classes,
+        model_name="gradient_boosting_baseline",
+    )
+
+    return (
+        baseline_model,
+        balanced_model,
+        rf_baseline_model,
+        rf_balanced_model,
+        gb_baseline_model,
+        X_test,
+        y_test,
+        classes,
+    )
