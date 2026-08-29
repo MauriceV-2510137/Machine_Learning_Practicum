@@ -17,12 +17,17 @@ def _build_pipeline(feature_cols: list, estimator) -> Pipeline:
 
 
 def build_logistic_regression_pipeline(
-    feature_cols: list, class_weight=None
+    feature_cols: list, class_weight=None, l1_ratio=0.0, solver="lbfgs"
 ) -> Pipeline:
     return _build_pipeline(
         feature_cols,
         LogisticRegression(
-            max_iter=1000, random_state=RANDOM_STATE, class_weight=class_weight
+            max_iter=1000,
+            tol=1e-3,
+            random_state=RANDOM_STATE,
+            class_weight=class_weight,
+            l1_ratio=l1_ratio,
+            solver=solver,
         ),
     )
 

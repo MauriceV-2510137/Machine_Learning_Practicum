@@ -4,6 +4,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 from sklearn.metrics import ConfusionMatrixDisplay
 
 
@@ -78,6 +79,53 @@ def plot_validation_curve(
     ax.set_ylabel("Balanced accuracy")
     ax.set_title(f"Validation curve: {param_label}")
     ax.legend()
+    path = output_dir / filename
+    plt.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {path}")
+
+
+def plot_cv_score_comparison(
+    param_range, results, param_label, output_dir, filename, log_x=False
+):
+    """Cross-validation score vs a hyperparameter for multiple named variants, overlaid (results: {label: val_scores})."""
+    fig, ax = plt.subplots(figsize=(6, 4))
+    for label, val_scores in results.items():
+        mean = val_scores.mean(axis=1)
+        std = val_scores.std(axis=1)
+        ax.plot(param_range, mean, label=label)
+        ax.fill_between(param_range, mean - std, mean + std, alpha=0.2)
+    if log_x:
+        ax.set_xscale("log")
+    ax.set_xlabel(param_label)
+    ax.set_ylabel("Balanced accuracy (cross-validation)")
+    ax.set_title(f"{param_label} — variant comparison")
+    ax.legend()
+    path = output_dir / filename
+    plt.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {path}")
+
+
+def plot_top_coefficients(
+    feature_names, coefficients, classes, output_dir, filename, top_n=12
+):
+    """Horizontal bar chart of the top-|coefficient| features per class, colored by sign."""
+    fig, axes = plt.subplots(
+        1, len(classes), figsize=(6 * len(classes), 5), gridspec_kw={"wspace": 0.7}
+    )
+    if len(classes) == 1:
+        axes = [axes]
+    for ax, cls, coefs in zip(axes, classes, coefficients):
+        order = np.argsort(np.abs(coefs))[-top_n:]
+        names = [feature_names[i] for i in order]
+        values = coefs[order]
+        colors = ["#2ca02c" if v > 0 else "#d62728" for v in values]
+        ax.barh(names, values, color=colors)
+        ax.axvline(0, color="black", linewidth=0.8)
+        ax.set_title(cls)
+        ax.set_xlabel("Coefficient")
+        ax.tick_params(axis="y", labelsize=8)
     path = output_dir / filename
     plt.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)

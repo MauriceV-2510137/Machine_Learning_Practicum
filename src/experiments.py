@@ -1,6 +1,10 @@
 """Per-model experiments: train (and tune, where applicable), evaluate, return fitted model(s)."""
 
+import warnings
 from functools import partial
+
+import numpy as np
+from sklearn.exceptions import ConvergenceWarning
 
 from src.config import OUTPUT_DIR
 from src.data import split_train_test
@@ -12,7 +16,12 @@ from src.models import (
     build_logistic_regression_pipeline,
     build_random_forest_pipeline,
 )
-from src.plots import plot_confusion_matrix, plot_validation_curve
+from src.plots import (
+    plot_confusion_matrix,
+    plot_cv_score_comparison,
+    plot_top_coefficients,
+    plot_validation_curve,
+)
 from src.tuning import (
     get_ccp_alpha_candidates,
     get_max_features_candidates,
@@ -88,15 +97,101 @@ def run_baseline_and_balanced(
 
 
 def run_logistic_regression(X, y, feature_cols, classes):
-    return run_baseline_and_balanced(
-        build_logistic_regression_pipeline,
+    """Cross-validated tuning of C for L1 vs L2 (via l1_ratio, solver=saga), then baseline + balanced fits + coefficients."""
+    X_train, X_test, y_train, y_test = split_train_test(X, y)
+
+    C_values = np.logspace(-2, 2, num=5)
+    cv_results = {}
+    best_overall = None  # (mean_val_score, l1_ratio, C, label)
+    for label, l1_ratio in (("L2", 0.0), ("L1", 1.0)):
+        tuning_builder = partial(
+            build_logistic_regression_pipeline, l1_ratio=l1_ratio, solver="saga"
+        )
+        print(
+            f"\nLogistic Regression — tuning C for {label} via 5-fold CV ({len(C_values)} candidates)..."
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ConvergenceWarning)
+            best_C, _, val_scores = tune_hyperparameter(
+                tuning_builder,
+                feature_cols,
+                X_train,
+                y_train,
+                param_name="C",
+                param_range=C_values,
+            )
+        mean_val_score = val_scores.mean(axis=1).max()
+        print(
+            f"Logistic Regression — best C for {label} (CV balanced accuracy): {best_C:.4g} -> {mean_val_score:.3f}"
+        )
+        cv_results[label] = val_scores
+        if best_overall is None or mean_val_score > best_overall[0]:
+            best_overall = (mean_val_score, l1_ratio, best_C, label)
+
+    plot_cv_score_comparison(
+        C_values,
+        cv_results,
+        param_label="C",
+        output_dir=OUTPUT_DIR,
+        filename="validation_curve_logistic_regression_C.png",
+        log_x=True,
+    )
+
+    _, best_l1_ratio, best_C, best_label = best_overall
+    print(f"Logistic Regression — overall best: {best_label}, C={best_C:.4g}")
+
+    tuned_builder = partial(
+        build_logistic_regression_pipeline, l1_ratio=best_l1_ratio, solver="saga"
+    )
+    tuned_params = {"model__C": best_C}
+    label_suffix = f"{best_label}, C={best_C:.4g}"
+
+    baseline_model, X_test, y_test = train_model(
         X,
         y,
+        tuned_builder,
         feature_cols,
-        classes,
-        "logistic_regression",
-        "Logistic Regression",
+        class_weight=None,
+        extra_params=tuned_params,
+        label=f"Logistic Regression (tuned, {label_suffix}, baseline)",
     )
+    evaluate_model(
+        baseline_model,
+        X_test,
+        y_test,
+        classes,
+        model_name="logistic_regression_tuned_baseline",
+    )
+
+    balanced_model, X_test, y_test = train_model(
+        X,
+        y,
+        tuned_builder,
+        feature_cols,
+        class_weight="balanced",
+        extra_params=tuned_params,
+        label=f"Logistic Regression (tuned, {label_suffix}, balanced)",
+    )
+    evaluate_model(
+        balanced_model,
+        X_test,
+        y_test,
+        classes,
+        model_name="logistic_regression_tuned_balanced",
+    )
+
+    raw_names = baseline_model.named_steps["preprocessor"].get_feature_names_out()
+    feature_names = [name.split("__", 1)[-1] for name in raw_names]
+    coefficients = baseline_model.named_steps["model"].coef_
+    plot_top_coefficients(
+        feature_names,
+        coefficients,
+        classes,
+        output_dir=OUTPUT_DIR,
+        filename="coefficients_logistic_regression_tuned.png",
+    )
+
+    return {"baseline": baseline_model, "balanced": balanced_model}
 
 
 def run_random_forest(X, y, feature_cols, classes):
@@ -154,7 +249,9 @@ def run_random_forest(X, y, feature_cols, classes):
         output_dir=OUTPUT_DIR,
         filename="validation_curve_random_forest_n_estimators.png",
     )
-    # Unlike max_features/ccp_alpha, more trees can't overfit (averaging only reduces variance).
+    # Unlike max_features/ccp_alpha, more trees can't overfit (averaging only reduces variance),
+    # so there's no real peak to chase here -- the curve just confirms the score has plateaued.
+    # Keep n_estimators at the project's existing default rather than following CV noise.
     final_n_estimators = 300
     print(
         f"Random Forest — n_estimators kept at {final_n_estimators} (curve confirms plateau, more trees can't overfit)"
