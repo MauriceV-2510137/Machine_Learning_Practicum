@@ -72,12 +72,24 @@ def build_bagging_pipeline(feature_cols: list, class_weight=None) -> Pipeline:
     )
 
 
-def build_gradient_boosting_pipeline(feature_cols: list, class_weight=None) -> Pipeline:
+def build_gradient_boosting_pipeline(
+    feature_cols: list,
+    class_weight=None,
+    max_depth=3,
+    learning_rate=0.1,
+    n_estimators=100,
+) -> Pipeline:
     """GradientBoostingClassifier has no class_weight param -- balancing would need sample_weight at fit time instead."""
     if class_weight is not None:
         raise NotImplementedError(
             "GradientBoostingClassifier has no class_weight parameter."
         )
     return _build_pipeline(
-        feature_cols, GradientBoostingClassifier(random_state=RANDOM_STATE)
+        feature_cols,
+        GradientBoostingClassifier(
+            random_state=RANDOM_STATE,
+            max_depth=max_depth,
+            learning_rate=learning_rate,
+            n_estimators=n_estimators,
+        ),
     )

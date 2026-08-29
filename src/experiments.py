@@ -5,6 +5,7 @@ from functools import partial
 
 import numpy as np
 from sklearn.exceptions import ConvergenceWarning
+from sklearn.utils.class_weight import compute_sample_weight
 
 from src.config import OUTPUT_DIR
 from src.data import split_train_test
@@ -28,7 +29,7 @@ from src.tuning import (
     tune_hyperparameter,
 )
 
-# Trees used only during max_features tuning -- fewer than the final 300, since the ranking of
+# Trees used only during max_features tuning fewer than the final 300, since the ranking of
 # candidate m values barely changes with tree count, and it keeps CV tuning fast.
 TUNING_N_ESTIMATORS = 50
 
@@ -40,15 +41,20 @@ def train_model(
     feature_cols,
     class_weight=None,
     extra_params=None,
+    balanced_sample_weight=False,
     label="Model",
 ):
-    """Train/test split + fit; extra_params (e.g. {"model__ccp_alpha": 0.001}) applied via set_params before fit."""
+    """Train/test split + fit; extra_params applied via set_params, balanced_sample_weight for models without class_weight."""
     X_train, X_test, y_train, y_test = split_train_test(X, y)
 
     model = pipeline_builder(feature_cols, class_weight=class_weight)
     if extra_params:
         model.set_params(**extra_params)
-    model.fit(X_train, y_train)
+
+    fit_kwargs = {}
+    if balanced_sample_weight:
+        fit_kwargs["model__sample_weight"] = compute_sample_weight("balanced", y_train)
+    model.fit(X_train, y_train, **fit_kwargs)
 
     accuracy = model.score(X_test, y_test)
     print(f"\n{label} — test accuracy: {accuracy:.3f}")
@@ -249,9 +255,7 @@ def run_random_forest(X, y, feature_cols, classes):
         output_dir=OUTPUT_DIR,
         filename="validation_curve_random_forest_n_estimators.png",
     )
-    # Unlike max_features/ccp_alpha, more trees can't overfit (averaging only reduces variance),
-    # so there's no real peak to chase here -- the curve just confirms the score has plateaued.
-    # Keep n_estimators at the project's existing default rather than following CV noise.
+    # Unlike max_features/ccp_alpha, more trees can't overfit (averaging only reduces variance)
     final_n_estimators = 300
     print(
         f"Random Forest — n_estimators kept at {final_n_estimators} (curve confirms plateau, more trees can't overfit)"
@@ -353,17 +357,128 @@ def run_bagging(X, y, feature_cols, classes):
 
 
 def run_gradient_boosting(X, y, feature_cols, classes):
-    """Baseline only -- GradientBoostingClassifier has no class_weight support (see models.py)."""
+    """Cross-validated tuning of max_depth, learning_rate, n_estimators (in that order), then baseline + balanced fits."""
+    X_train, X_test, y_train, y_test = split_train_test(X, y)
+
+    max_depth_values = [1, 2, 3, 4, 5, 6]
+    print(
+        f"\nGradient Boosting — tuning max_depth via 5-fold CV ({len(max_depth_values)} candidates)..."
+    )
+    best_max_depth, md_train, md_val = tune_hyperparameter(
+        build_gradient_boosting_pipeline,
+        feature_cols,
+        X_train,
+        y_train,
+        param_name="max_depth",
+        param_range=max_depth_values,
+    )
+    print(
+        f"Gradient Boosting — best max_depth (CV balanced accuracy): {best_max_depth}"
+    )
+    plot_validation_curve(
+        max_depth_values,
+        md_train,
+        md_val,
+        param_label="max_depth",
+        output_dir=OUTPUT_DIR,
+        filename="validation_curve_gradient_boosting_max_depth.png",
+    )
+
+    learning_rate_values = [0.01, 0.05, 0.1, 0.2, 0.5]
+    tuning_builder_depth = partial(
+        build_gradient_boosting_pipeline, max_depth=int(best_max_depth)
+    )
+    print(
+        f"Gradient Boosting — tuning learning_rate via 5-fold CV ({len(learning_rate_values)} candidates, max_depth={best_max_depth})..."
+    )
+    best_lr, lr_train, lr_val = tune_hyperparameter(
+        tuning_builder_depth,
+        feature_cols,
+        X_train,
+        y_train,
+        param_name="learning_rate",
+        param_range=learning_rate_values,
+    )
+    print(f"Gradient Boosting — best learning_rate (CV balanced accuracy): {best_lr}")
+    plot_validation_curve(
+        learning_rate_values,
+        lr_train,
+        lr_val,
+        param_label="learning_rate",
+        output_dir=OUTPUT_DIR,
+        filename="validation_curve_gradient_boosting_learning_rate.png",
+        log_x=True,
+    )
+
+    n_estimators_values = [50, 100, 200, 300, 500]
+    tuning_builder_depth_lr = partial(
+        build_gradient_boosting_pipeline,
+        max_depth=int(best_max_depth),
+        learning_rate=float(best_lr),
+    )
+    print(
+        f"Gradient Boosting — tuning n_estimators via 5-fold CV ({len(n_estimators_values)} candidates, max_depth={best_max_depth}, learning_rate={best_lr})..."
+    )
+    best_n_estimators, n_train, n_val = tune_hyperparameter(
+        tuning_builder_depth_lr,
+        feature_cols,
+        X_train,
+        y_train,
+        param_name="n_estimators",
+        param_range=n_estimators_values,
+    )
+    print(
+        f"Gradient Boosting — best n_estimators (CV balanced accuracy): {best_n_estimators}"
+    )
+    plot_validation_curve(
+        n_estimators_values,
+        n_train,
+        n_val,
+        param_label="n_estimators",
+        output_dir=OUTPUT_DIR,
+        filename="validation_curve_gradient_boosting_n_estimators.png",
+    )
+    # Unlike Random Forest, boosting CAN overfit with too many estimators (each new tree its the remaining residuals)
+    # So unlike the RF plateau check -- we use the actual CV-selected value here rather than overriding it.
+
+    tuned_params = {
+        "model__max_depth": int(best_max_depth),
+        "model__learning_rate": float(best_lr),
+        "model__n_estimators": int(best_n_estimators),
+    }
+    label_suffix = f"max_depth={best_max_depth}, learning_rate={best_lr}, n_estimators={best_n_estimators}"
+
     baseline_model, X_test, y_test = train_model(
         X,
         y,
         build_gradient_boosting_pipeline,
         feature_cols,
-        class_weight=None,
-        label="Gradient Boosting (baseline)",
+        extra_params=tuned_params,
+        label=f"Gradient Boosting (tuned, {label_suffix}, baseline)",
     )
     evaluate_model(
-        baseline_model, X_test, y_test, classes, model_name="gradient_boosting_baseline"
+        baseline_model,
+        X_test,
+        y_test,
+        classes,
+        model_name="gradient_boosting_tuned_baseline",
     )
 
-    return {"baseline": baseline_model}
+    balanced_model, X_test, y_test = train_model(
+        X,
+        y,
+        build_gradient_boosting_pipeline,
+        feature_cols,
+        extra_params=tuned_params,
+        balanced_sample_weight=True,
+        label=f"Gradient Boosting (tuned, {label_suffix}, balanced via sample_weight)",
+    )
+    evaluate_model(
+        balanced_model,
+        X_test,
+        y_test,
+        classes,
+        model_name="gradient_boosting_tuned_balanced",
+    )
+
+    return {"baseline": baseline_model, "balanced": balanced_model}
