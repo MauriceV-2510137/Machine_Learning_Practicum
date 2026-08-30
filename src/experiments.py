@@ -1,21 +1,14 @@
-"""Per-model experiments: train (and tune, where applicable), evaluate, return fitted model(s)."""
+"""Per-model tuning experiments: train, tune (where applicable), evaluate, persist best hyperparameters."""
 
 import warnings
 from functools import partial
 
 import numpy as np
-import pandas as pd
 from sklearn.exceptions import ConvergenceWarning
-from sklearn.model_selection import cross_val_score
-from sklearn.utils.class_weight import compute_sample_weight
 
 from src.config import OUTPUT_DIR
-from src.data import get_feature_target_split, split_train_test
-from src.evaluate import (
-    compute_confusion_matrix,
-    get_classification_report_dict,
-    print_classification_report,
-)
+from src.data import split_train_test
+from src.hyperparameter_store import save_hyperparameters
 from src.models import (
     build_bagging_pipeline,
     build_decision_tree_pipeline,
@@ -24,12 +17,11 @@ from src.models import (
     build_random_forest_pipeline,
 )
 from src.plots import (
-    plot_confusion_matrix,
     plot_cv_score_comparison,
-    plot_grouped_bar_comparison,
     plot_top_coefficients,
     plot_validation_curve,
 )
+from src.training import evaluate_model, train_model
 from src.tuning import (
     get_ccp_alpha_candidates,
     get_max_features_candidates,
@@ -39,43 +31,6 @@ from src.tuning import (
 # Trees used only during max_features tuning -- fewer than the final 300, since the ranking of
 # candidate m values barely changes with tree count, and it keeps CV tuning fast.
 TUNING_N_ESTIMATORS = 50
-
-
-def train_model(
-    X,
-    y,
-    pipeline_builder,
-    feature_cols,
-    class_weight=None,
-    extra_params=None,
-    balanced_sample_weight=False,
-    label="Model",
-):
-    """Train/test split + fit; extra_params applied via set_params, balanced_sample_weight for models without class_weight."""
-    X_train, X_test, y_train, y_test = split_train_test(X, y)
-
-    model = pipeline_builder(feature_cols, class_weight=class_weight)
-    if extra_params:
-        model.set_params(**extra_params)
-
-    fit_kwargs = {}
-    if balanced_sample_weight:
-        fit_kwargs["model__sample_weight"] = compute_sample_weight("balanced", y_train)
-    model.fit(X_train, y_train, **fit_kwargs)
-
-    accuracy = model.score(X_test, y_test)
-    print(f"\n{label} — test accuracy: {accuracy:.3f}")
-
-    return model, X_test, y_test
-
-
-def evaluate_model(model, X_test, y_test, classes, model_name):
-    """Classification report + confusion matrix for a trained model."""
-    print_classification_report(model, X_test, y_test, classes)
-    cm = compute_confusion_matrix(model, X_test, y_test, classes)
-    plot_confusion_matrix(
-        cm, classes, OUTPUT_DIR, filename=f"confusion_matrix_{model_name}.png"
-    )
 
 
 def run_baseline_and_balanced(
@@ -111,7 +66,7 @@ def run_baseline_and_balanced(
 
 def run_logistic_regression(X, y, feature_cols, classes):
     """Cross-validated tuning of C for L1 vs L2 (via l1_ratio, solver=saga), then baseline + balanced fits + coefficients."""
-    X_train, X_test, y_train, y_test = split_train_test(X, y)
+    X_train, _, y_train, _ = split_train_test(X, y)
 
     C_values = np.logspace(-2, 2, num=5)
     cv_results = {}
@@ -152,17 +107,22 @@ def run_logistic_regression(X, y, feature_cols, classes):
 
     _, best_l1_ratio, best_C, best_label = best_overall
     print(f"Logistic Regression — overall best: {best_label}, C={best_C:.4g}")
-
-    tuned_builder = partial(
-        build_logistic_regression_pipeline, l1_ratio=best_l1_ratio, solver="saga"
+    save_hyperparameters(
+        "Logistic Regression",
+        {"l1_ratio": best_l1_ratio, "solver": "saga", "C": float(best_C)},
     )
-    tuned_params = {"model__C": best_C}
+
+    tuned_params = {
+        "model__l1_ratio": best_l1_ratio,
+        "model__solver": "saga",
+        "model__C": float(best_C),
+    }
     label_suffix = f"{best_label}, C={best_C:.4g}"
 
     baseline_model, X_test, y_test = train_model(
         X,
         y,
-        tuned_builder,
+        build_logistic_regression_pipeline,
         feature_cols,
         class_weight=None,
         extra_params=tuned_params,
@@ -179,7 +139,7 @@ def run_logistic_regression(X, y, feature_cols, classes):
     balanced_model, X_test, y_test = train_model(
         X,
         y,
-        tuned_builder,
+        build_logistic_regression_pipeline,
         feature_cols,
         class_weight="balanced",
         extra_params=tuned_params,
@@ -207,9 +167,63 @@ def run_logistic_regression(X, y, feature_cols, classes):
     return {"baseline": baseline_model, "balanced": balanced_model}
 
 
+def run_decision_tree(X, y, feature_cols, classes):
+    """Cross-validated cost-complexity pruning, then fit and evaluate the final tree."""
+    X_train, _, y_train, _ = split_train_test(X, y)
+
+    alphas = get_ccp_alpha_candidates(X_train, y_train, feature_cols)
+    print(
+        f"\nDecision Tree — tuning ccp_alpha via 5-fold CV ({len(alphas)} candidates)..."
+    )
+    best_alpha, train_scores, val_scores = tune_hyperparameter(
+        build_decision_tree_pipeline,
+        feature_cols,
+        X_train,
+        y_train,
+        param_name="ccp_alpha",
+        param_range=alphas,
+    )
+    print(f"Decision Tree — best ccp_alpha (CV balanced accuracy): {best_alpha:.5f}")
+    save_hyperparameters("Decision Tree", {"ccp_alpha": float(best_alpha)})
+
+    plot_validation_curve(
+        alphas,
+        train_scores,
+        val_scores,
+        param_label="ccp_alpha",
+        output_dir=OUTPUT_DIR,
+        filename="validation_curve_decision_tree_ccp_alpha.png",
+    )
+
+    model, X_test, y_test = train_model(
+        X,
+        y,
+        build_decision_tree_pipeline,
+        feature_cols,
+        extra_params={"model__ccp_alpha": float(best_alpha)},
+        label=f"Decision Tree (pruned, ccp_alpha={best_alpha:.5f})",
+    )
+    evaluate_model(model, X_test, y_test, classes, model_name="decision_tree_pruned")
+
+    return {"pruned": model}
+
+
+def run_bagging(X, y, feature_cols, classes):
+    """Baseline + balanced Bagging (Random Forest with max_features=None) -- not tuned, no hyperparameters to persist."""
+    return run_baseline_and_balanced(
+        build_bagging_pipeline,
+        X,
+        y,
+        feature_cols,
+        classes,
+        "bagging",
+        "Bagging",
+    )
+
+
 def run_random_forest(X, y, feature_cols, classes):
     """Cross-validated tuning of max_features (m), then n_estimators, then baseline + balanced fits."""
-    X_train, X_test, y_train, y_test = split_train_test(X, y)
+    X_train, _, y_train, _ = split_train_test(X, y)
 
     m_values = get_max_features_candidates(X_train, feature_cols)
     tuning_builder = partial(
@@ -269,6 +283,10 @@ def run_random_forest(X, y, feature_cols, classes):
     print(
         f"Random Forest — n_estimators kept at {final_n_estimators} (curve confirms plateau, more trees can't overfit)"
     )
+    save_hyperparameters(
+        "Random Forest",
+        {"max_features": int(best_m), "n_estimators": final_n_estimators},
+    )
 
     tuned_params = {
         "model__max_features": int(best_m),
@@ -313,61 +331,9 @@ def run_random_forest(X, y, feature_cols, classes):
     return {"baseline": baseline_model, "balanced": balanced_model}
 
 
-def run_decision_tree(X, y, feature_cols, classes):
-    """Cross-validated cost-complexity pruning, then fit and evaluate the final tree."""
-    X_train, X_test, y_train, y_test = split_train_test(X, y)
-
-    alphas = get_ccp_alpha_candidates(X_train, y_train, feature_cols)
-    print(
-        f"\nDecision Tree — tuning ccp_alpha via 5-fold CV ({len(alphas)} candidates)..."
-    )
-    best_alpha, train_scores, val_scores = tune_hyperparameter(
-        build_decision_tree_pipeline,
-        feature_cols,
-        X_train,
-        y_train,
-        param_name="ccp_alpha",
-        param_range=alphas,
-    )
-    print(f"Decision Tree — best ccp_alpha (CV balanced accuracy): {best_alpha:.5f}")
-
-    plot_validation_curve(
-        alphas,
-        train_scores,
-        val_scores,
-        param_label="ccp_alpha",
-        output_dir=OUTPUT_DIR,
-        filename="validation_curve_decision_tree_ccp_alpha.png",
-    )
-
-    model, X_test, y_test = train_model(
-        X,
-        y,
-        build_decision_tree_pipeline,
-        feature_cols,
-        extra_params={"model__ccp_alpha": best_alpha},
-        label=f"Decision Tree (pruned, ccp_alpha={best_alpha:.5f})",
-    )
-    evaluate_model(model, X_test, y_test, classes, model_name="decision_tree_pruned")
-
-    return {"pruned": model}
-
-
-def run_bagging(X, y, feature_cols, classes):
-    return run_baseline_and_balanced(
-        build_bagging_pipeline,
-        X,
-        y,
-        feature_cols,
-        classes,
-        "bagging",
-        "Bagging",
-    )
-
-
 def run_gradient_boosting(X, y, feature_cols, classes):
     """Cross-validated tuning of max_depth, learning_rate, n_estimators (in that order), then baseline + balanced fits."""
-    X_train, X_test, y_train, y_test = split_train_test(X, y)
+    X_train, _, y_train, _ = split_train_test(X, y)
 
     max_depth_values = [1, 2, 3, 4, 5, 6]
     print(
@@ -450,6 +416,14 @@ def run_gradient_boosting(X, y, feature_cols, classes):
     # Unlike Random Forest, boosting CAN overfit with too many estimators (each new tree
     # fits the remaining residuals), so -- unlike the RF plateau check -- we use the
     # actual CV-selected value here rather than overriding it.
+    save_hyperparameters(
+        "Gradient Boosting",
+        {
+            "max_depth": int(best_max_depth),
+            "learning_rate": float(best_lr),
+            "n_estimators": int(best_n_estimators),
+        },
+    )
 
     tuned_params = {
         "model__max_depth": int(best_max_depth),
@@ -492,208 +466,3 @@ def run_gradient_boosting(X, y, feature_cols, classes):
     )
 
     return {"baseline": baseline_model, "balanced": balanced_model}
-
-
-# Best hyperparameters already found in each model's own tuning step (see run_* above) --
-# reused here as fixed constants so this comparison isolates the feature-set effect only.
-# (name, pipeline_builder, extra_params, needs_sample_weight_for_balanced)
-FINAL_MODEL_CONFIGS = [
-    (
-        "Logistic Regression",
-        partial(build_logistic_regression_pipeline, l1_ratio=1.0, solver="saga"),
-        {"model__C": 1.0},
-        False,
-    ),
-    (
-        "Decision Tree",
-        build_decision_tree_pipeline,
-        {"model__ccp_alpha": 0.00078},
-        False,
-    ),
-    (
-        "Bagging",
-        build_bagging_pipeline,
-        {},
-        False,
-    ),
-    (
-        "Random Forest",
-        build_random_forest_pipeline,
-        {"model__max_features": 46, "model__n_estimators": 300},
-        False,
-    ),
-    (
-        "Gradient Boosting",
-        build_gradient_boosting_pipeline,
-        {
-            "model__max_depth": 5,
-            "model__learning_rate": 0.1,
-            "model__n_estimators": 200,
-        },
-        True,
-    ),
-]
-
-
-def run_full_year_comparison(df, enrollment_cols, sem1_cols, sem2_cols, classes):
-    """Refit every model's already-tuned config on early-warning vs full-year features to isolate the feature-set effect."""
-    feature_sets = {
-        "early_warning": enrollment_cols + sem1_cols,
-        "full_year": enrollment_cols + sem1_cols + sem2_cols,
-    }
-
-    accuracies = {}  # {(model_name, fs_name, variant): accuracy}
-    for model_name, builder, extra_params, use_sample_weight in FINAL_MODEL_CONFIGS:
-        for fs_name, feature_cols in feature_sets.items():
-            X, y = get_feature_target_split(df, feature_cols)
-
-            baseline_model, X_test, y_test = train_model(
-                X,
-                y,
-                builder,
-                feature_cols,
-                class_weight=None,
-                extra_params=extra_params,
-                label=f"{model_name} ({fs_name}, baseline)",
-            )
-            accuracies[(model_name, fs_name, "baseline")] = baseline_model.score(
-                X_test, y_test
-            )
-
-            if use_sample_weight:
-                balanced_model, X_test, y_test = train_model(
-                    X,
-                    y,
-                    builder,
-                    feature_cols,
-                    extra_params=extra_params,
-                    balanced_sample_weight=True,
-                    label=f"{model_name} ({fs_name}, balanced)",
-                )
-            else:
-                balanced_model, X_test, y_test = train_model(
-                    X,
-                    y,
-                    builder,
-                    feature_cols,
-                    class_weight="balanced",
-                    extra_params=extra_params,
-                    label=f"{model_name} ({fs_name}, balanced)",
-                )
-            accuracies[(model_name, fs_name, "balanced")] = balanced_model.score(
-                X_test, y_test
-            )
-
-    print("\n--- Early-warning vs full-year (baseline variant, test accuracy) ---")
-    model_names = [cfg[0] for cfg in FINAL_MODEL_CONFIGS]
-    early_scores = [
-        accuracies[(name, "early_warning", "baseline")] for name in model_names
-    ]
-    full_scores = [accuracies[(name, "full_year", "baseline")] for name in model_names]
-    for name, ew, fy in zip(model_names, early_scores, full_scores):
-        print(
-            f"{name:<20} early-warning: {ew:.3f}   full-year: {fy:.3f}   delta: {fy - ew:+.3f}"
-        )
-
-    plot_grouped_bar_comparison(
-        model_names,
-        early_scores,
-        full_scores,
-        label_a="Early-warning (30 features)",
-        label_b="Full-year (36 features)",
-        y_label="Test accuracy",
-        title="Early-warning vs full-year features",
-        output_dir=OUTPUT_DIR,
-        filename="feature_set_comparison_accuracy.png",
-    )
-
-    return accuracies
-
-
-def run_final_summary(df, enrollment_cols, sem1_cols, classes):
-    """Consolidate every final (already-tuned) early-warning model into one CV + held-out test table and plot."""
-    feature_cols = enrollment_cols + sem1_cols
-    X, y = get_feature_target_split(df, feature_cols)
-    X_train, _, y_train, _ = split_train_test(X, y)
-
-    rows = []
-    for model_name, builder, extra_params, use_sample_weight in FINAL_MODEL_CONFIGS:
-        for variant, class_weight, sample_weight_flag in (
-            ("baseline", None, False),
-            ("balanced", None if use_sample_weight else "balanced", use_sample_weight),
-        ):
-            pipeline = builder(feature_cols, class_weight=class_weight)
-            pipeline.set_params(**extra_params)
-
-            if sample_weight_flag:
-                cv_mean, cv_std = (
-                    None,
-                    None,
-                )  # sample_weight CV needs per-fold weights, skipped here
-            else:
-                # scoring="accuracy" here (not "balanced_accuracy" like the tuning steps used) so
-                # this is a fair like-for-like comparison against the held-out test accuracy below.
-                cv_scores = cross_val_score(
-                    pipeline, X_train, y_train, cv=5, scoring="accuracy", n_jobs=-1
-                )
-                cv_mean, cv_std = cv_scores.mean(), cv_scores.std()
-
-            model, X_test_, y_test_ = train_model(
-                X,
-                y,
-                builder,
-                feature_cols,
-                class_weight=class_weight,
-                extra_params=extra_params,
-                balanced_sample_weight=sample_weight_flag,
-                label=f"{model_name} ({variant})",
-            )
-            report = get_classification_report_dict(model, X_test_, y_test_, classes)
-
-            row = {
-                "model": model_name,
-                "variant": variant,
-                "cv_accuracy_mean": cv_mean,
-                "cv_accuracy_std": cv_std,
-                "test_accuracy": model.score(X_test_, y_test_),
-            }
-            for cls in classes:
-                row[f"{cls}_precision"] = report[cls]["precision"]
-                row[f"{cls}_recall"] = report[cls]["recall"]
-                row[f"{cls}_f1"] = report[cls]["f1-score"]
-            rows.append(row)
-
-    results_df = pd.DataFrame(rows)
-    csv_path = OUTPUT_DIR / "final_results_summary.csv"
-    results_df.to_csv(csv_path, index=False)
-    print(f"\nSaved: {csv_path}")
-
-    print(
-        "\n--- Final model summary (5-fold CV accuracy vs held-out test accuracy) ---"
-    )
-    for _, r in results_df.iterrows():
-        cv_str = (
-            f"{r['cv_accuracy_mean']:.3f} ± {r['cv_accuracy_std']:.3f}"
-            if pd.notna(r["cv_accuracy_mean"])
-            else "n/a (sample_weight)"
-        )
-        print(
-            f"{r['model']:<20} {r['variant']:<10} CV: {cv_str:<20} Test acc: {r['test_accuracy']:.3f}"
-        )
-
-    labels = [f"{r['model']} ({r['variant']})" for _, r in results_df.iterrows()]
-    cv_values = results_df["cv_accuracy_mean"].fillna(0).tolist()
-    test_values = results_df["test_accuracy"].tolist()
-    plot_grouped_bar_comparison(
-        labels,
-        cv_values,
-        test_values,
-        label_a="5-fold CV accuracy (train)",
-        label_b="Held-out test accuracy",
-        y_label="Accuracy",
-        title="Final models: cross-validated vs held-out performance",
-        output_dir=OUTPUT_DIR,
-        filename="final_summary_comparison.png",
-    )
-
-    return results_df

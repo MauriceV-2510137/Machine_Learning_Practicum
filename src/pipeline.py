@@ -2,6 +2,7 @@
 
 import pandas as pd
 
+from src.analysis import run_final_summary, run_full_year_comparison
 from src.config import OUTPUT_DIR
 from src.data import (
     get_classes,
@@ -12,8 +13,6 @@ from src.data import (
 from src.experiments import (
     run_bagging,
     run_decision_tree,
-    run_final_summary,
-    run_full_year_comparison,
     run_gradient_boosting,
     run_logistic_regression,
     run_random_forest,
