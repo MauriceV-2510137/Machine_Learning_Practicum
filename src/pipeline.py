@@ -12,6 +12,8 @@ from src.data import (
 from src.experiments import (
     run_bagging,
     run_decision_tree,
+    run_final_summary,
+    run_full_year_comparison,
     run_gradient_boosting,
     run_logistic_regression,
     run_random_forest,
@@ -78,16 +80,18 @@ def prepare_early_warning_features(df, enrollment_cols, sem1_cols):
     return X, y, early_warning_features
 
 
-def run_pipeline(selected_steps=None):
-    """Load data + EDA, then run the selected model steps (default: all), timed individually."""
-    steps_to_run = selected_steps or list(MODEL_STEPS.keys())
+def run_pipeline(selected_steps=None, include_full_year=False, include_summary=False):
+    """Load data + EDA, then run the selected model steps (default: all), optionally full-year + final summary."""
+    steps_to_run = (
+        selected_steps if selected_steps is not None else list(MODEL_STEPS.keys())
+    )
     unknown = set(steps_to_run) - set(MODEL_STEPS.keys())
     if unknown:
         raise ValueError(
             f"Unknown step(s): {unknown}. Available: {list(MODEL_STEPS.keys())}"
         )
 
-    df, enrollment_cols, sem1_cols, _, classes = load_and_summarize()
+    df, enrollment_cols, sem1_cols, sem2_cols, classes = load_and_summarize()
     generate_plots(df, classes)
     X, y, early_warning_features = prepare_early_warning_features(
         df, enrollment_cols, sem1_cols
@@ -98,6 +102,18 @@ def run_pipeline(selected_steps=None):
         with timer(step_name):
             results[step_name] = MODEL_STEPS[step_name](
                 X, y, early_warning_features, classes
+            )
+
+    if include_full_year:
+        with timer("full_year_comparison"):
+            results["full_year_comparison"] = run_full_year_comparison(
+                df, enrollment_cols, sem1_cols, sem2_cols, classes
+            )
+
+    if include_summary:
+        with timer("final_summary"):
+            results["final_summary"] = run_final_summary(
+                df, enrollment_cols, sem1_cols, classes
             )
 
     return results

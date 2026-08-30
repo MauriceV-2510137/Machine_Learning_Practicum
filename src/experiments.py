@@ -4,12 +4,18 @@ import warnings
 from functools import partial
 
 import numpy as np
+import pandas as pd
 from sklearn.exceptions import ConvergenceWarning
+from sklearn.model_selection import cross_val_score
 from sklearn.utils.class_weight import compute_sample_weight
 
 from src.config import OUTPUT_DIR
-from src.data import split_train_test
-from src.evaluate import compute_confusion_matrix, print_classification_report
+from src.data import get_feature_target_split, split_train_test
+from src.evaluate import (
+    compute_confusion_matrix,
+    get_classification_report_dict,
+    print_classification_report,
+)
 from src.models import (
     build_bagging_pipeline,
     build_decision_tree_pipeline,
@@ -20,6 +26,7 @@ from src.models import (
 from src.plots import (
     plot_confusion_matrix,
     plot_cv_score_comparison,
+    plot_grouped_bar_comparison,
     plot_top_coefficients,
     plot_validation_curve,
 )
@@ -29,7 +36,7 @@ from src.tuning import (
     tune_hyperparameter,
 )
 
-# Trees used only during max_features tuning fewer than the final 300, since the ranking of
+# Trees used only during max_features tuning -- fewer than the final 300, since the ranking of
 # candidate m values barely changes with tree count, and it keeps CV tuning fast.
 TUNING_N_ESTIMATORS = 50
 
@@ -255,7 +262,9 @@ def run_random_forest(X, y, feature_cols, classes):
         output_dir=OUTPUT_DIR,
         filename="validation_curve_random_forest_n_estimators.png",
     )
-    # Unlike max_features/ccp_alpha, more trees can't overfit (averaging only reduces variance)
+    # Unlike max_features/ccp_alpha, more trees can't overfit (averaging only reduces variance),
+    # so there's no real peak to chase here -- the curve just confirms the score has plateaued.
+    # Keep n_estimators at the project's existing default rather than following CV noise.
     final_n_estimators = 300
     print(
         f"Random Forest — n_estimators kept at {final_n_estimators} (curve confirms plateau, more trees can't overfit)"
@@ -438,8 +447,9 @@ def run_gradient_boosting(X, y, feature_cols, classes):
         output_dir=OUTPUT_DIR,
         filename="validation_curve_gradient_boosting_n_estimators.png",
     )
-    # Unlike Random Forest, boosting CAN overfit with too many estimators (each new tree its the remaining residuals)
-    # So unlike the RF plateau check -- we use the actual CV-selected value here rather than overriding it.
+    # Unlike Random Forest, boosting CAN overfit with too many estimators (each new tree
+    # fits the remaining residuals), so -- unlike the RF plateau check -- we use the
+    # actual CV-selected value here rather than overriding it.
 
     tuned_params = {
         "model__max_depth": int(best_max_depth),
@@ -482,3 +492,208 @@ def run_gradient_boosting(X, y, feature_cols, classes):
     )
 
     return {"baseline": baseline_model, "balanced": balanced_model}
+
+
+# Best hyperparameters already found in each model's own tuning step (see run_* above) --
+# reused here as fixed constants so this comparison isolates the feature-set effect only.
+# (name, pipeline_builder, extra_params, needs_sample_weight_for_balanced)
+FINAL_MODEL_CONFIGS = [
+    (
+        "Logistic Regression",
+        partial(build_logistic_regression_pipeline, l1_ratio=1.0, solver="saga"),
+        {"model__C": 1.0},
+        False,
+    ),
+    (
+        "Decision Tree",
+        build_decision_tree_pipeline,
+        {"model__ccp_alpha": 0.00078},
+        False,
+    ),
+    (
+        "Bagging",
+        build_bagging_pipeline,
+        {},
+        False,
+    ),
+    (
+        "Random Forest",
+        build_random_forest_pipeline,
+        {"model__max_features": 46, "model__n_estimators": 300},
+        False,
+    ),
+    (
+        "Gradient Boosting",
+        build_gradient_boosting_pipeline,
+        {
+            "model__max_depth": 5,
+            "model__learning_rate": 0.1,
+            "model__n_estimators": 200,
+        },
+        True,
+    ),
+]
+
+
+def run_full_year_comparison(df, enrollment_cols, sem1_cols, sem2_cols, classes):
+    """Refit every model's already-tuned config on early-warning vs full-year features to isolate the feature-set effect."""
+    feature_sets = {
+        "early_warning": enrollment_cols + sem1_cols,
+        "full_year": enrollment_cols + sem1_cols + sem2_cols,
+    }
+
+    accuracies = {}  # {(model_name, fs_name, variant): accuracy}
+    for model_name, builder, extra_params, use_sample_weight in FINAL_MODEL_CONFIGS:
+        for fs_name, feature_cols in feature_sets.items():
+            X, y = get_feature_target_split(df, feature_cols)
+
+            baseline_model, X_test, y_test = train_model(
+                X,
+                y,
+                builder,
+                feature_cols,
+                class_weight=None,
+                extra_params=extra_params,
+                label=f"{model_name} ({fs_name}, baseline)",
+            )
+            accuracies[(model_name, fs_name, "baseline")] = baseline_model.score(
+                X_test, y_test
+            )
+
+            if use_sample_weight:
+                balanced_model, X_test, y_test = train_model(
+                    X,
+                    y,
+                    builder,
+                    feature_cols,
+                    extra_params=extra_params,
+                    balanced_sample_weight=True,
+                    label=f"{model_name} ({fs_name}, balanced)",
+                )
+            else:
+                balanced_model, X_test, y_test = train_model(
+                    X,
+                    y,
+                    builder,
+                    feature_cols,
+                    class_weight="balanced",
+                    extra_params=extra_params,
+                    label=f"{model_name} ({fs_name}, balanced)",
+                )
+            accuracies[(model_name, fs_name, "balanced")] = balanced_model.score(
+                X_test, y_test
+            )
+
+    print("\n--- Early-warning vs full-year (baseline variant, test accuracy) ---")
+    model_names = [cfg[0] for cfg in FINAL_MODEL_CONFIGS]
+    early_scores = [
+        accuracies[(name, "early_warning", "baseline")] for name in model_names
+    ]
+    full_scores = [accuracies[(name, "full_year", "baseline")] for name in model_names]
+    for name, ew, fy in zip(model_names, early_scores, full_scores):
+        print(
+            f"{name:<20} early-warning: {ew:.3f}   full-year: {fy:.3f}   delta: {fy - ew:+.3f}"
+        )
+
+    plot_grouped_bar_comparison(
+        model_names,
+        early_scores,
+        full_scores,
+        label_a="Early-warning (30 features)",
+        label_b="Full-year (36 features)",
+        y_label="Test accuracy",
+        title="Early-warning vs full-year features",
+        output_dir=OUTPUT_DIR,
+        filename="feature_set_comparison_accuracy.png",
+    )
+
+    return accuracies
+
+
+def run_final_summary(df, enrollment_cols, sem1_cols, classes):
+    """Consolidate every final (already-tuned) early-warning model into one CV + held-out test table and plot."""
+    feature_cols = enrollment_cols + sem1_cols
+    X, y = get_feature_target_split(df, feature_cols)
+    X_train, _, y_train, _ = split_train_test(X, y)
+
+    rows = []
+    for model_name, builder, extra_params, use_sample_weight in FINAL_MODEL_CONFIGS:
+        for variant, class_weight, sample_weight_flag in (
+            ("baseline", None, False),
+            ("balanced", None if use_sample_weight else "balanced", use_sample_weight),
+        ):
+            pipeline = builder(feature_cols, class_weight=class_weight)
+            pipeline.set_params(**extra_params)
+
+            if sample_weight_flag:
+                cv_mean, cv_std = (
+                    None,
+                    None,
+                )  # sample_weight CV needs per-fold weights, skipped here
+            else:
+                # scoring="accuracy" here (not "balanced_accuracy" like the tuning steps used) so
+                # this is a fair like-for-like comparison against the held-out test accuracy below.
+                cv_scores = cross_val_score(
+                    pipeline, X_train, y_train, cv=5, scoring="accuracy", n_jobs=-1
+                )
+                cv_mean, cv_std = cv_scores.mean(), cv_scores.std()
+
+            model, X_test_, y_test_ = train_model(
+                X,
+                y,
+                builder,
+                feature_cols,
+                class_weight=class_weight,
+                extra_params=extra_params,
+                balanced_sample_weight=sample_weight_flag,
+                label=f"{model_name} ({variant})",
+            )
+            report = get_classification_report_dict(model, X_test_, y_test_, classes)
+
+            row = {
+                "model": model_name,
+                "variant": variant,
+                "cv_accuracy_mean": cv_mean,
+                "cv_accuracy_std": cv_std,
+                "test_accuracy": model.score(X_test_, y_test_),
+            }
+            for cls in classes:
+                row[f"{cls}_precision"] = report[cls]["precision"]
+                row[f"{cls}_recall"] = report[cls]["recall"]
+                row[f"{cls}_f1"] = report[cls]["f1-score"]
+            rows.append(row)
+
+    results_df = pd.DataFrame(rows)
+    csv_path = OUTPUT_DIR / "final_results_summary.csv"
+    results_df.to_csv(csv_path, index=False)
+    print(f"\nSaved: {csv_path}")
+
+    print(
+        "\n--- Final model summary (5-fold CV accuracy vs held-out test accuracy) ---"
+    )
+    for _, r in results_df.iterrows():
+        cv_str = (
+            f"{r['cv_accuracy_mean']:.3f} ± {r['cv_accuracy_std']:.3f}"
+            if pd.notna(r["cv_accuracy_mean"])
+            else "n/a (sample_weight)"
+        )
+        print(
+            f"{r['model']:<20} {r['variant']:<10} CV: {cv_str:<20} Test acc: {r['test_accuracy']:.3f}"
+        )
+
+    labels = [f"{r['model']} ({r['variant']})" for _, r in results_df.iterrows()]
+    cv_values = results_df["cv_accuracy_mean"].fillna(0).tolist()
+    test_values = results_df["test_accuracy"].tolist()
+    plot_grouped_bar_comparison(
+        labels,
+        cv_values,
+        test_values,
+        label_a="5-fold CV accuracy (train)",
+        label_b="Held-out test accuracy",
+        y_label="Accuracy",
+        title="Final models: cross-validated vs held-out performance",
+        output_dir=OUTPUT_DIR,
+        filename="final_summary_comparison.png",
+    )
+
+    return results_df

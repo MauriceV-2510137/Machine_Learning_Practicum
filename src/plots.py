@@ -130,3 +130,31 @@ def plot_top_coefficients(
     plt.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved: {path}")
+
+
+def plot_grouped_bar_comparison(
+    categories,
+    series_a,
+    series_b,
+    label_a,
+    label_b,
+    y_label,
+    title,
+    output_dir,
+    filename,
+):
+    """Grouped bar chart comparing two named series across categories."""
+    x = np.arange(len(categories))
+    width = 0.35
+    fig, ax = plt.subplots(figsize=(2.2 * len(categories) + 2, 5))
+    ax.bar(x - width / 2, series_a, width, label=label_a)
+    ax.bar(x + width / 2, series_b, width, label=label_b)
+    ax.set_xticks(x)
+    ax.set_xticklabels(categories, rotation=20, ha="right")
+    ax.set_ylabel(y_label)
+    ax.set_title(title)
+    ax.legend()
+    path = output_dir / filename
+    plt.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {path}")
