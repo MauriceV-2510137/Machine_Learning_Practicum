@@ -2,6 +2,7 @@
 
 import pandas as pd
 from sklearn.model_selection import cross_val_score
+from sklearn.utils.class_weight import compute_sample_weight
 
 from src.config import OUTPUT_DIR
 from src.data import get_feature_target_split, split_train_test
@@ -168,17 +169,23 @@ def run_final_summary(df, enrollment_cols, sem1_cols, classes):
                 pipeline.set_params(**extra_params)
 
             if sample_weight_flag:
-                cv_mean, cv_std = (
-                    None,
-                    None,
-                )  # sample_weight CV needs per-fold weights, skipped here
+                weights = compute_sample_weight("balanced", y_train)
+                cv_scores = cross_val_score(
+                    pipeline,
+                    X_train,
+                    y_train,
+                    cv=5,
+                    scoring="accuracy",
+                    n_jobs=-1,
+                    params={"model__sample_weight": weights},
+                )
             else:
                 # scoring="accuracy" here (not "balanced_accuracy" like the tuning steps used) so
                 # this is a fair like-for-like comparison against the held-out test accuracy below.
                 cv_scores = cross_val_score(
                     pipeline, X_train, y_train, cv=5, scoring="accuracy", n_jobs=-1
                 )
-                cv_mean, cv_std = cv_scores.mean(), cv_scores.std()
+            cv_mean, cv_std = cv_scores.mean(), cv_scores.std()
 
             model, X_test_, y_test_ = train_model(
                 X,
@@ -214,17 +221,12 @@ def run_final_summary(df, enrollment_cols, sem1_cols, classes):
         "\n--- Final model summary (5-fold CV accuracy vs held-out test accuracy) ---"
     )
     for _, r in results_df.iterrows():
-        cv_str = (
-            f"{r['cv_accuracy_mean']:.3f} ± {r['cv_accuracy_std']:.3f}"
-            if pd.notna(r["cv_accuracy_mean"])
-            else "n/a (sample_weight)"
-        )
         print(
-            f"{r['model']:<20} {r['variant']:<10} CV: {cv_str:<20} Test acc: {r['test_accuracy']:.3f}"
+            f"{r['model']:<20} {r['variant']:<10} CV: {r['cv_accuracy_mean']:.3f} ± {r['cv_accuracy_std']:.3f}   Test acc: {r['test_accuracy']:.3f}"
         )
 
     labels = [f"{r['model']} ({r['variant']})" for _, r in results_df.iterrows()]
-    cv_values = results_df["cv_accuracy_mean"].fillna(0).tolist()
+    cv_values = results_df["cv_accuracy_mean"].tolist()
     test_values = results_df["test_accuracy"].tolist()
     plot_grouped_bar_comparison(
         labels,
