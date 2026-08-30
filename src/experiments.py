@@ -18,9 +18,11 @@ from src.models import (
 )
 from src.plots import (
     plot_cv_score_comparison,
+    plot_feature_importances,
     plot_top_coefficients,
     plot_validation_curve,
 )
+from src.preprocessing import get_feature_names
 from src.training import evaluate_model, train_model
 from src.tuning import (
     get_ccp_alpha_candidates,
@@ -153,8 +155,7 @@ def run_logistic_regression(X, y, feature_cols, classes):
         model_name="logistic_regression_tuned_balanced",
     )
 
-    raw_names = baseline_model.named_steps["preprocessor"].get_feature_names_out()
-    feature_names = [name.split("__", 1)[-1] for name in raw_names]
+    feature_names = get_feature_names(baseline_model.named_steps["preprocessor"])
     coefficients = baseline_model.named_steps["model"].coef_
     plot_top_coefficients(
         feature_names,
@@ -258,7 +259,7 @@ def run_random_forest(X, y, feature_cols, classes):
         build_random_forest_pipeline, n_jobs=1, max_features=int(best_m)
     )
     print(
-        f"Random Forest — checking n_estimators plateau via 5-fold CV ({len(n_estimators_values)} candidates, m={best_m})..."
+        f"\nRandom Forest — checking n_estimators plateau via 5-fold CV ({len(n_estimators_values)} candidates, m={best_m})..."
     )
     _, n_train_scores, n_val_scores = tune_hyperparameter(
         tuning_builder_fixed_m,
@@ -309,6 +310,16 @@ def run_random_forest(X, y, feature_cols, classes):
         y_test,
         classes,
         model_name="random_forest_tuned_baseline",
+    )
+
+    feature_names = get_feature_names(baseline_model.named_steps["preprocessor"])
+    importances = baseline_model.named_steps["model"].feature_importances_
+    plot_feature_importances(
+        feature_names,
+        importances,
+        output_dir=OUTPUT_DIR,
+        filename="feature_importances_random_forest.png",
+        title="Random Forest — feature importances",
     )
 
     balanced_model, X_test, y_test = train_model(
@@ -364,7 +375,7 @@ def run_gradient_boosting(X, y, feature_cols, classes):
         build_gradient_boosting_pipeline, max_depth=int(best_max_depth)
     )
     print(
-        f"Gradient Boosting — tuning learning_rate via 5-fold CV ({len(learning_rate_values)} candidates, max_depth={best_max_depth})..."
+        f"\nGradient Boosting — tuning learning_rate via 5-fold CV ({len(learning_rate_values)} candidates, max_depth={best_max_depth})..."
     )
     best_lr, lr_train, lr_val = tune_hyperparameter(
         tuning_builder_depth,
@@ -392,7 +403,7 @@ def run_gradient_boosting(X, y, feature_cols, classes):
         learning_rate=float(best_lr),
     )
     print(
-        f"Gradient Boosting — tuning n_estimators via 5-fold CV ({len(n_estimators_values)} candidates, max_depth={best_max_depth}, learning_rate={best_lr})..."
+        f"\nGradient Boosting — tuning n_estimators via 5-fold CV ({len(n_estimators_values)} candidates, max_depth={best_max_depth}, learning_rate={best_lr})..."
     )
     best_n_estimators, n_train, n_val = tune_hyperparameter(
         tuning_builder_depth_lr,
@@ -446,6 +457,16 @@ def run_gradient_boosting(X, y, feature_cols, classes):
         y_test,
         classes,
         model_name="gradient_boosting_tuned_baseline",
+    )
+
+    feature_names = get_feature_names(baseline_model.named_steps["preprocessor"])
+    importances = baseline_model.named_steps["model"].feature_importances_
+    plot_feature_importances(
+        feature_names,
+        importances,
+        output_dir=OUTPUT_DIR,
+        filename="feature_importances_gradient_boosting.png",
+        title="Gradient Boosting — feature importances",
     )
 
     balanced_model, X_test, y_test = train_model(

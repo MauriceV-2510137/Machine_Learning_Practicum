@@ -17,3 +17,8 @@ def build_preprocessor(feature_cols: list) -> ColumnTransformer:
             ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_cols),
         ]
     )
+
+
+def get_feature_names(preprocessor: ColumnTransformer) -> list:
+    """Clean (prefix-stripped) feature names from a fitted preprocessor, e.g. 'num__Age' -> 'Age'."""
+    return [name.split("__", 1)[-1] for name in preprocessor.get_feature_names_out()]

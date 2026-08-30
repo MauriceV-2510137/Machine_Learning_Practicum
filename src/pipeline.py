@@ -17,7 +17,11 @@ from src.experiments import (
     run_logistic_regression,
     run_random_forest,
 )
-from src.plots import plot_feature_distributions_by_target, plot_target_distribution
+from src.plots import (
+    plot_feature_distributions_by_target,
+    plot_step_runtimes,
+    plot_target_distribution,
+)
 from src.timer import timer
 
 pd.set_option("display.max_columns", None)
@@ -33,8 +37,15 @@ MODEL_STEPS = {
 }
 
 
+def _print_section_header(title):
+    """Visually distinct header marking the start of a major pipeline step, for readability in long runs."""
+    bar = "=" * 70
+    print(f"\n{bar}\n{title}\n{bar}")
+
+
 def load_and_summarize():
     """Load the data, print a quick overview, return df + derived structure."""
+    _print_section_header("Data Loading & EDA")
     df = load_data()
     print(f"Loaded: {df.shape[0]} rows, {df.shape[1]} columns")
 
@@ -97,22 +108,29 @@ def run_pipeline(selected_steps=None, include_full_year=False, include_summary=F
     )
 
     results = {}
+    step_times = {}
     for step_name in steps_to_run:
-        with timer(step_name):
+        _print_section_header(step_name.replace("_", " ").title())
+        with timer(step_name, results=step_times):
             results[step_name] = MODEL_STEPS[step_name](
                 X, y, early_warning_features, classes
             )
 
     if include_full_year:
-        with timer("full_year_comparison"):
+        _print_section_header("Full-Year Comparison")
+        with timer("full_year_comparison", results=step_times):
             results["full_year_comparison"] = run_full_year_comparison(
                 df, enrollment_cols, sem1_cols, sem2_cols, classes
             )
 
     if include_summary:
-        with timer("final_summary"):
+        _print_section_header("Final Summary")
+        with timer("final_summary", results=step_times):
             results["final_summary"] = run_final_summary(
                 df, enrollment_cols, sem1_cols, classes
             )
+
+    if step_times:
+        plot_step_runtimes(step_times, OUTPUT_DIR, "step_runtimes.png")
 
     return results

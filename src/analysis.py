@@ -4,7 +4,7 @@ import pandas as pd
 from sklearn.model_selection import cross_val_score
 from sklearn.utils.class_weight import compute_sample_weight
 
-from src.config import OUTPUT_DIR
+from src.config import OUTPUT_DIR, PROJECT_ROOT
 from src.data import get_feature_target_split, split_train_test
 from src.evaluate import get_classification_report_dict
 from src.experiments import (
@@ -21,7 +21,7 @@ from src.models import (
     build_logistic_regression_pipeline,
     build_random_forest_pipeline,
 )
-from src.plots import plot_grouped_bar_comparison
+from src.plots import plot_multi_bar_comparison
 from src.training import train_model
 
 # (display name, base pipeline builder, fallback tuning step (None if not tuned), needs sample_weight)
@@ -81,6 +81,7 @@ def run_full_year_comparison(df, enrollment_cols, sem1_cols, sem2_cols, classes)
         extra_params = _resolve_extra_params(
             model_name, tuning_step, X_early, y_early, early_warning_features, classes
         )
+        print(f"\n{model_name}:")
 
         for fs_name, feature_cols in feature_sets.items():
             X, y = get_feature_target_split(df, feature_cols)
@@ -92,7 +93,7 @@ def run_full_year_comparison(df, enrollment_cols, sem1_cols, sem2_cols, classes)
                 feature_cols,
                 class_weight=None,
                 extra_params=extra_params,
-                label=f"{model_name} ({fs_name}, baseline)",
+                label=f"  ({fs_name}, baseline)",
             )
             accuracies[(model_name, fs_name, "baseline")] = baseline_model.score(
                 X_test, y_test
@@ -106,7 +107,7 @@ def run_full_year_comparison(df, enrollment_cols, sem1_cols, sem2_cols, classes)
                     feature_cols,
                     extra_params=extra_params,
                     balanced_sample_weight=True,
-                    label=f"{model_name} ({fs_name}, balanced)",
+                    label=f"  ({fs_name}, balanced)",
                 )
             else:
                 balanced_model, X_test, y_test = train_model(
@@ -116,7 +117,7 @@ def run_full_year_comparison(df, enrollment_cols, sem1_cols, sem2_cols, classes)
                     feature_cols,
                     class_weight="balanced",
                     extra_params=extra_params,
-                    label=f"{model_name} ({fs_name}, balanced)",
+                    label=f"  ({fs_name}, balanced)",
                 )
             accuracies[(model_name, fs_name, "balanced")] = balanced_model.score(
                 X_test, y_test
@@ -128,17 +129,17 @@ def run_full_year_comparison(df, enrollment_cols, sem1_cols, sem2_cols, classes)
         accuracies[(name, "early_warning", "baseline")] for name in model_names
     ]
     full_scores = [accuracies[(name, "full_year", "baseline")] for name in model_names]
-    for name, ew, fy in zip(model_names, early_scores, full_scores):
+    for name, ew, fy in zip(model_names, early_scores, full_scores, strict=True):
         print(
             f"{name:<20} early-warning: {ew:.3f}   full-year: {fy:.3f}   delta: {fy - ew:+.3f}"
         )
 
-    plot_grouped_bar_comparison(
+    plot_multi_bar_comparison(
         model_names,
-        early_scores,
-        full_scores,
-        label_a="Early-warning (30 features)",
-        label_b="Full-year (36 features)",
+        {
+            "Early-warning (30 features)": early_scores,
+            "Full-year (36 features)": full_scores,
+        },
         y_label="Test accuracy",
         title="Early-warning vs full-year features",
         output_dir=OUTPUT_DIR,
@@ -159,6 +160,7 @@ def run_final_summary(df, enrollment_cols, sem1_cols, classes):
         extra_params = _resolve_extra_params(
             model_name, tuning_step, X, y, feature_cols, classes
         )
+        print(f"\n{model_name}:")
 
         for variant, class_weight, sample_weight_flag in (
             ("baseline", None, False),
@@ -195,7 +197,7 @@ def run_final_summary(df, enrollment_cols, sem1_cols, classes):
                 class_weight=class_weight,
                 extra_params=extra_params,
                 balanced_sample_weight=sample_weight_flag,
-                label=f"{model_name} ({variant})",
+                label=f"  ({variant})",
             )
             report = get_classification_report_dict(model, X_test_, y_test_, classes)
 
@@ -215,7 +217,7 @@ def run_final_summary(df, enrollment_cols, sem1_cols, classes):
     results_df = pd.DataFrame(rows)
     csv_path = OUTPUT_DIR / "final_results_summary.csv"
     results_df.to_csv(csv_path, index=False)
-    print(f"\nSaved: {csv_path}")
+    print(f"\nSaved: {csv_path.relative_to(PROJECT_ROOT)}")
 
     print(
         "\n--- Final model summary (5-fold CV accuracy vs held-out test accuracy) ---"
@@ -228,16 +230,26 @@ def run_final_summary(df, enrollment_cols, sem1_cols, classes):
     labels = [f"{r['model']} ({r['variant']})" for _, r in results_df.iterrows()]
     cv_values = results_df["cv_accuracy_mean"].tolist()
     test_values = results_df["test_accuracy"].tolist()
-    plot_grouped_bar_comparison(
+    plot_multi_bar_comparison(
         labels,
-        cv_values,
-        test_values,
-        label_a="5-fold CV accuracy (train)",
-        label_b="Held-out test accuracy",
+        {
+            "5-fold CV accuracy (train)": cv_values,
+            "Held-out test accuracy": test_values,
+        },
         y_label="Accuracy",
         title="Final models: cross-validated vs held-out performance",
         output_dir=OUTPUT_DIR,
         filename="final_summary_comparison.png",
+    )
+
+    recall_series = {cls: results_df[f"{cls}_recall"].tolist() for cls in classes}
+    plot_multi_bar_comparison(
+        labels,
+        recall_series,
+        y_label="Recall",
+        title="Per-class recall across final models",
+        output_dir=OUTPUT_DIR,
+        filename="per_class_recall_comparison.png",
     )
 
     return results_df

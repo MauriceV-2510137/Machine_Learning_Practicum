@@ -7,6 +7,20 @@ import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.metrics import ConfusionMatrixDisplay
 
+from src.config import PROJECT_ROOT
+
+
+def _save_figure(fig, output_dir, filename):
+    """Save a figure, close it, and print a project-relative path (not the full absolute path)."""
+    path = output_dir / filename
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    try:
+        rel_path = path.relative_to(PROJECT_ROOT)
+    except ValueError:
+        rel_path = path
+    print(f"Saved: {rel_path}")
+
 
 def plot_target_distribution(df, classes, output_dir):
     counts = df["Target"].value_counts().reindex(classes)
@@ -14,35 +28,25 @@ def plot_target_distribution(df, classes, output_dir):
     counts.plot(kind="bar", ax=ax, color=["#d62728", "#ff7f0e", "#2ca02c"])
     ax.set_title("Target class distribution")
     ax.set_ylabel("Number of students")
-    path = output_dir / "target_distribution.png"
-    plt.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"Saved: {path}")
+    _save_figure(fig, output_dir, "target_distribution.png")
 
 
 def plot_feature_distributions_by_target(df, classes, output_dir, columns):
     fig, axes = plt.subplots(1, len(columns), figsize=(4 * len(columns), 4))
-    for ax, col in zip(axes, columns):
+    for ax, col in zip(axes, columns, strict=True):
         for cls in classes:
             subset = df.loc[df["Target"] == cls, col]
             ax.hist(subset, bins=20, alpha=0.5, label=cls)
         ax.set_title(col)
         ax.legend(fontsize=8)
-    path = output_dir / "feature_distributions_by_target.png"
-    plt.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"Saved: {path}")
+    _save_figure(fig, output_dir, "feature_distributions_by_target.png")
 
 
 def plot_confusion_matrix(cm, classes, output_dir, filename="confusion_matrix.png"):
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=classes)
-
     fig, ax = plt.subplots(figsize=(5, 5))
     disp.plot(ax=ax, cmap="Blues", colorbar=False)
-    path = output_dir / filename
-    plt.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"Saved: {path}")
+    _save_figure(fig, output_dir, filename)
 
 
 def plot_validation_curve(
@@ -79,10 +83,7 @@ def plot_validation_curve(
     ax.set_ylabel("Balanced accuracy")
     ax.set_title(f"Validation curve: {param_label}")
     ax.legend()
-    path = output_dir / filename
-    plt.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"Saved: {path}")
+    _save_figure(fig, output_dir, filename)
 
 
 def plot_cv_score_comparison(
@@ -101,10 +102,7 @@ def plot_cv_score_comparison(
     ax.set_ylabel("Balanced accuracy (cross-validation)")
     ax.set_title(f"{param_label} — variant comparison")
     ax.legend()
-    path = output_dir / filename
-    plt.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"Saved: {path}")
+    _save_figure(fig, output_dir, filename)
 
 
 def plot_top_coefficients(
@@ -116,7 +114,7 @@ def plot_top_coefficients(
     )
     if len(classes) == 1:
         axes = [axes]
-    for ax, cls, coefs in zip(axes, classes, coefficients):
+    for ax, cls, coefs in zip(axes, classes, coefficients, strict=True):
         order = np.argsort(np.abs(coefs))[-top_n:]
         names = [feature_names[i] for i in order]
         values = coefs[order]
@@ -126,35 +124,54 @@ def plot_top_coefficients(
         ax.set_title(cls)
         ax.set_xlabel("Coefficient")
         ax.tick_params(axis="y", labelsize=8)
-    path = output_dir / filename
-    plt.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"Saved: {path}")
+    _save_figure(fig, output_dir, filename)
 
 
-def plot_grouped_bar_comparison(
-    categories,
-    series_a,
-    series_b,
-    label_a,
-    label_b,
-    y_label,
-    title,
+def plot_feature_importances(
+    feature_names,
+    importances,
     output_dir,
     filename,
+    top_n=15,
+    title="Feature importances",
 ):
-    """Grouped bar chart comparing two named series across categories."""
+    """Horizontal bar chart of the top-N features by importance (e.g. tree-based .feature_importances_)."""
+    order = np.argsort(importances)[-top_n:]
+    names = [feature_names[i] for i in order]
+    values = importances[order]
+    fig, ax = plt.subplots(figsize=(7, 6))
+    ax.barh(names, values, color="#1f77b4")
+    ax.set_xlabel("Importance")
+    ax.set_title(title)
+    _save_figure(fig, output_dir, filename)
+
+
+def plot_multi_bar_comparison(categories, series, y_label, title, output_dir, filename):
+    """Grouped bar chart comparing any number of named series across categories (series: {label: values})."""
     x = np.arange(len(categories))
-    width = 0.35
+    n_series = len(series)
+    width = 0.8 / n_series
     fig, ax = plt.subplots(figsize=(2.2 * len(categories) + 2, 5))
-    ax.bar(x - width / 2, series_a, width, label=label_a)
-    ax.bar(x + width / 2, series_b, width, label=label_b)
+    for i, (label, values) in enumerate(series.items()):
+        offset = (i - (n_series - 1) / 2) * width
+        ax.bar(x + offset, values, width, label=label)
     ax.set_xticks(x)
     ax.set_xticklabels(categories, rotation=20, ha="right")
     ax.set_ylabel(y_label)
     ax.set_title(title)
     ax.legend()
-    path = output_dir / filename
-    plt.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"Saved: {path}")
+    _save_figure(fig, output_dir, filename)
+
+
+def plot_step_runtimes(step_times, output_dir, filename):
+    """Bar chart of how long each pipeline step took in this run (wall-clock seconds)."""
+    names = [name.replace("_", " ").title() for name in step_times]
+    times = list(step_times.values())
+    x = np.arange(len(names))
+    fig, ax = plt.subplots(figsize=(1.3 * len(names) + 2, 5))
+    ax.bar(x, times, color="#1f77b4")
+    ax.set_xticks(x)
+    ax.set_xticklabels(names, rotation=20, ha="right")
+    ax.set_ylabel("Seconds")
+    ax.set_title("Runtime per pipeline step (this run)")
+    _save_figure(fig, output_dir, filename)
